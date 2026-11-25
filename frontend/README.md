@@ -7,7 +7,20 @@ memantau hasil, serta menindaklanjuti realisasi ISO yang diprioritaskan.
 
 ## Getting Started
 
-To run this application:
+### 1. Running with Docker Compose (Full-Stack - Recommended)
+
+Dari root repository, Anda dapat mengompilasi dan menjalankan seluruh stack (Frontend, Backend, Database, Worker, Migrasi, & Gateway Caddy) sekaligus:
+
+```bash
+docker compose up -d --build
+```
+Aplikasi akan langsung dapat diakses di:
+- **Frontend & App Gateway:** `http://localhost:7000`
+- **Backend API:** `http://localhost:7000/api/v1/...`
+
+### 2. Standalone Development
+
+Untuk menjalankan frontend development server secara lokal dengan Hot Module Replacement (HMR):
 
 ```bash
 npm install

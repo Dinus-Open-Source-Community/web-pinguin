@@ -15,8 +15,9 @@ analytics teragregasi. File ISO tetap berada di layanan mirror UDINUS.
 
 PostgreSQL development berjalan di Docker dan menerima koneksi host hanya pada
 `localhost:5432` (`127.0.0.1:5432`). Compose menyimpan data dalam named volume.
-Jalankan `docker compose up -d` dari root repository. Backend yang berjalan di
-host membaca konfigurasi dari environment, bukan dari source code.
+Jalankan `docker compose up -d postgres` untuk menyalakan database saja, atau
+`docker compose up -d --build` untuk menyalakan seluruh stack aplikasi. Backend yang
+berjalan di host membaca konfigurasi dari environment, bukan dari source code.
 
 ```dotenv
 DB_HOST=127.0.0.1
@@ -29,9 +30,9 @@ DB_SSLMODE=disable
 
 DSN Go dibentuk saat runtime dari nilai tersebut. `.env` pada root repository
 menyediakan variabel untuk Compose dan backend, dan tidak boleh di-commit.
-`sslmode=disable` hanya untuk development lokal. Jika API kelak dijalankan dalam
-container yang sama di Compose, gunakan hostname service `postgres`; `127.0.0.1`
-di dalam container menunjuk ke container API itu sendiri.
+`sslmode=disable` hanya untuk development lokal. Pada `compose.yaml` root, service
+`api` dan `worker` terhubung ke PostgreSQL menggunakan hostname internal `DB_HOST=postgres`.
+Jika backend dijalankan secara native dari host (standalone), gunakan `DB_HOST=127.0.0.1`.
 
 ## Konvensi skema
 

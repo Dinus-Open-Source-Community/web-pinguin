@@ -4,19 +4,145 @@ services:
     container_name: web-pinguin-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pinguin_dinus}
+      POSTGRES_USER: ${POSTGRES_USER:-pinguin_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
-      - web_pinguin_postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 10s
+    networks:
+      - pinguin-network
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: migrate
+    container_name: web-pinguin-migrate
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-pinguin_dinus}
+      DB_USER: ${POSTGRES_USER:-pinguin_app}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - pinguin-network
+
+  catalog-seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: catalog-import
+    container_name: web-pinguin-catalog-seed
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-pinguin_dinus}
+      DB_USER: ${POSTGRES_USER:-pinguin_app}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      DB_SSLMODE: disable
+    command: ["-file", "/catalog/pinguin-public-snapshot.json"]
+    volumes:
+      - ./backend/catalog:/catalog:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - pinguin-network
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: api
+    container_name: web-pinguin-api
+    restart: unless-stopped
+    environment:
+      API_ADDR: 0.0.0.0:8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-pinguin_dinus}
+      DB_USER: ${POSTGRES_USER:-pinguin_app}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      DB_SSLMODE: disable
+      DB_TIMEOUT_SECONDS: 5
+      LISTING_DIR: /srv/mirror
+      CORS_ALLOWED_ORIGINS: http://localhost:7000,http://127.0.0.1:7000
+      JWT_SECRET: ${JWT_SECRET:-3abbef7b59b754ec6247c421ea6f12e8c66fc86ca2a92d51d0a22016f4d29140}
+      JWT_ISSUER: web-pinguin
+      JWT_AUDIENCE: web-pinguin-admin
+    volumes:
+      - ${LISTING_DIR:-./mirror-sample}:/srv/mirror:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - pinguin-network
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: worker
+    container_name: web-pinguin-worker
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-pinguin_dinus}
+      DB_USER: ${POSTGRES_USER:-pinguin_app}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      DB_SSLMODE: disable
+      WORKER_INTERVAL_SECONDS: 60
+      WORKER_BATCH_SIZE: 5000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - pinguin-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: web-pinguin-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    networks:
+      - pinguin-network
+
+  gateway:
+    image: caddy:2-alpine
+    container_name: web-pinguin-gateway
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-7000}:7000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - pinguin-network
+
+networks:
+  pinguin-network:
+    driver: bridge
 
 volumes:
-  web_pinguin_postgres_data:
+  postgres_data:

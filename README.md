@@ -360,26 +360,39 @@ Kontrak OpenAPI juga memuat beberapa endpoint rencana. API katalog repository
 publik kini tersedia; endpoint survei publik/admin dan regions sudah tersedia di
 runtime. Endpoint admin memakai JWT HS256; lihat bagian [Penerbitan Token JWT Admin](backend/README.md#penerbitan-token-jwt-admin-cli) pada panduan backend untuk perintah penerbitan token, klaim, role, dan rotasi signing key.
 
-### Prasyarat
+### Prasyarat & Cara Menjalankan
 
-- PostgreSQL development berjalan melalui Docker Compose.
-- API berjalan di `http://127.0.0.1:8080`. Saat laporan uji dibuat, API
-  dihentikan setelah pengujian; container PostgreSQL tetap berjalan.
-- Backend sudah dikonfigurasi dengan `LISTING_DIR` yang menunjuk ke folder
-  fixture atau root mirror, dan migrasi database sudah diterapkan.
+Tersedia dua opsi untuk menjalankan aplikasi:
 
-Compose pada repo saat ini hanya menjalankan PostgreSQL, bukan API. Jika database
-belum aktif, jalankan dari root repo:
+#### Opsi 1: Full-Stack Docker Compose (Port 7000 - Direkomendasikan)
+Menjalankan seluruh ekosistem aplikasi sekaligus: Frontend (TanStack/Vite), Backend API (Go Gin), Worker Analitik, Database PostgreSQL, migrasi database & seed katalog otomatis, serta Gateway Caddy:
 
 ```powershell
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 ```
 
-API menggunakan konfigurasi backend dari environment. Ikuti bagian PostgreSQL
-dan Menjalankan API di [`backend/README.md`](backend/README.md), lalu jalankan
-API pada terminal terpisah. API bind default ke `127.0.0.1:8080`. Untuk uji
-listing dan unduh, `LISTING_DIR` harus berisi file uji yang boleh dibaca publik.
+Setelah container berjalan:
+- **Web Frontend:** `http://localhost:7000`
+- **Health Check:** `http://localhost:7000/health/ready`
+- **API Endpoints:** `http://localhost:7000/api/v1/...` (bebas kendala CORS karena berada di bawah gateway yang sama).
+
+#### Opsi 2: Standalone Development (Port 8080 & 3000)
+Jika ingin menjalankan backend atau frontend secara native untuk proses coding cepat:
+1. Jalankan PostgreSQL saja dari Docker:
+   ```powershell
+   docker compose up -d postgres
+   ```
+2. Jalankan Backend Go di terminal terpisah (bind ke `127.0.0.1:8080`):
+   ```powershell
+   cd backend
+   go run .
+   ```
+3. Jalankan Frontend di terminal terpisah (bind ke `127.0.0.1:3000`):
+   ```powershell
+   cd frontend
+   npm run dev
+   ```
 
 ### Siapkan Postman
 
@@ -387,7 +400,7 @@ Buat Environment bernama **Web Pinguin Local** dengan variabel berikut:
 
 | Variable | Initial value | Keterangan |
 |---|---|---|
-| `baseUrl` | `http://127.0.0.1:8080` | URL API lokal |
+| `baseUrl` | `http://localhost:7000` (atau `http://127.0.0.1:8080` mode standalone) | URL API lokal |
 | `listingPath` | `ubuntu-24.04.3-desktop-amd64.iso.torrent` | Path file sample yang disimpan di `mirror-sample/` |
 
 File sample `.torrent` (bukan ISO) dapat dipakai untuk mengetes transfer dengan

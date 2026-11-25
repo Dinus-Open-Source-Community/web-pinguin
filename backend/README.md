@@ -99,8 +99,12 @@ dimatikan. Dari root repository, salin `.env.example` menjadi `.env`, isi
 `DB_PASSWORD` dan `POSTGRES_PASSWORD` dengan nilai lokal yang sama, lalu start:
 
 ```powershell
-docker compose up -d
+# Jalankan database saja untuk development backend secara mandiri:
+docker compose up -d postgres
 docker compose ps
+
+# (Opsional) Jalankan seluruh stack aplikasi sekaligus (Gateway port 7000):
+docker compose up -d --build
 ```
 
 Jangan commit `.env`. Nilai `DB_*` dipakai backend dan `POSTGRES_*` dipakai

@@ -56,6 +56,8 @@ belum masuk runtime. Portal bukan host salinan ISO terpisah.
 ## 3. Struktur direktori
 
 ```text
+compose.yaml          # Root Docker Compose (Gateway :7000, Frontend, API, Worker, DB)
+Caddyfile             # Gateway reverse proxy configuration
 backend/
   main.go               # Entry point HTTP API
   cmd/worker/           # Entry point log processor
@@ -85,6 +87,7 @@ backend/
   go.sum
 
 frontend/
+  Dockerfile
   src/
     routes/             # TanStack Router routes
     features/
@@ -125,6 +128,8 @@ docs/
 
 | Proses | Tanggung jawab | Dependency wajib |
 |---|---|---|
+| Gateway (Caddy) | Reverse proxy publik di port 7000, routing /api/* ke Go API dan /* ke Frontend | API & Frontend |
+| Frontend | TanStack Router/Vite SPA & SSR runner di port 3000 internal | Gateway & API |
 | API | Endpoint publik/admin, validasi, katalog, survei, statistik, health | PostgreSQL; adapter mirror sesuai endpoint |
 | Worker | Membaca log, memproses event, geolokasi, agregasi, retensi | Sumber log, PostgreSQL, geolocation provider/database |
 | Migrator | Menjalankan perubahan skema sebelum versi aplikasi diluncurkan | PostgreSQL |
