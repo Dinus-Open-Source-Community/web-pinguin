@@ -1,0 +1,111 @@
+name: Backend contract
+
+on:
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-contract.yml']
+  push:
+    paths: ['backend/**', '.github/workflows/backend-contract.yml']
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: pinguin_test
+          POSTGRES_USER: pinguin
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pinguin -d pinguin_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: pinguin_test
+      DB_USER: pinguin
+      DB_PASSWORD: ci-only-password
+      DB_SSLMODE: disable
+      JWT_SECRET: ci-contract-signing-secret-0123456789abcdef0123456789
+      JWT_SECRET_PREVIOUS: ci-previous-signing-secret-0123456789abcdef0123456789
+      JWT_ISSUER: web-pinguin
+      JWT_AUDIENCE: web-pinguin-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate OpenAPI
+        run: npx --yes @redocly/cli@2.82.0 bundle backend/api/openapi.yaml --output /tmp/openapi.json
+      - name: Compare documented routes with runtime registrations
+        run: node backend/scripts/check-contract-routes.mjs /tmp/openapi.json
+      - name: Compile and run Go checks
+        working-directory: backend
+        run: go test ./...
+      - name: Build production service images
+        run: |
+          for target in api worker migrate retention catalog-import nginx-import; do
+            docker build --target "$target" -f backend/Dockerfile "backend"
+          done
+      - name: Validate production Compose configuration
+        env:
+          BACKEND_ENV_FILE: .env.production.example
+        run: docker compose --env-file deploy/.env.production.example -f deploy/compose.production.yaml config --quiet
+      - name: Apply migrations
+        working-directory: backend
+        run: go run ./cmd/migrate
+      - name: Import and verify operator catalog snapshot
+        working-directory: backend
+        run: bash scripts/catalog-smoke.sh
+      - name: Seed repository path-prefix contract fixtures
+        run: |
+          PGPASSWORD=ci-only-password psql -h 127.0.0.1 -U pinguin -d pinguin_test -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO repositories (slug, path_prefix, name, distribution, category, status, mirror_base_url, is_public)
+VALUES
+  ('catalog-prefix-smoke', 'iso/catalog-prefix-smoke', 'Catalog Prefix Smoke', 'Smoke Linux', 'iso', 'active', 'https://mirror.example.invalid/iso/catalog-prefix-smoke/', true),
+  ('catalog-nested-prefix-smoke', 'iso/nested/catalog-prefix-smoke', 'Nested Catalog Prefix Smoke', 'Nested Smoke Linux', 'iso', 'active', 'https://mirror.example.invalid/iso/nested/catalog-prefix-smoke/', true);
+
+INSERT INTO geo_regions (country_code, region_code, country_name, region_name, latitude, longitude)
+VALUES
+  ('GB', 'SMOKE_HIGH', 'United Kingdom', 'Smoke High', 51.5, -0.1),
+  ('GB', 'SMOKE_LOW_A', 'United Kingdom', 'Smoke Low A', 52.0, -1.0),
+  ('GB', 'SMOKE_LOW_B', 'United Kingdom', 'Smoke Low B', 53.0, -2.0),
+  ('DE', 'SMOKE_TINY', 'Germany', 'Smoke Tiny', 52.5, 13.4)
+ON CONFLICT (country_code, region_code) DO UPDATE SET
+  country_name = EXCLUDED.country_name, region_name = EXCLUDED.region_name,
+  latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude;
+
+INSERT INTO download_events_raw (source_key, source, occurred_at, file_path, http_status, geo_region_id)
+SELECT 'region-contract-' || region_code || '-' || event_number, 'nginx', now(), 'iso/debian/debian13/smoke.iso', 200, id
+FROM geo_regions
+JOIN LATERAL generate_series(1, CASE region_code
+  WHEN 'SMOKE_HIGH' THEN 5 WHEN 'SMOKE_LOW_A' THEN 3
+  WHEN 'SMOKE_LOW_B' THEN 2 WHEN 'SMOKE_TINY' THEN 2 END) AS events(event_number) ON true
+WHERE (country_code, region_code) IN (('GB','SMOKE_HIGH'), ('GB','SMOKE_LOW_A'), ('GB','SMOKE_LOW_B'), ('DE','SMOKE_TINY'));
+SQL
+      - name: Verify retention deletion boundaries
+        working-directory: backend
+        run: go run ./cmd/retention-smoke
+      - name: Run API contract smoke checks
+        working-directory: backend
+        env:
+          LISTING_DIR: ${{ runner.temp }}/pinguin-listing
+          API_ADDR: 127.0.0.1:8080
+        run: |
+          mkdir -p "$LISTING_DIR"
+          echo fixture > "$LISTING_DIR/contract.txt"
+          go run . > "$RUNNER_TEMP/pinguin-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/pinguin-api.pid"
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health/live >/dev/null; then break; fi
+            sleep 1
+          done
+          bash scripts/contract-smoke.sh
+      - name: Stop API
+        if: always()
+        run: if [[ -f "$RUNNER_TEMP/pinguin-api.pid" ]]; then kill "$(cat "$RUNNER_TEMP/pinguin-api.pid")" || true; fi

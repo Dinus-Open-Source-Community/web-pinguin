@@ -1,0 +1,1280 @@
+openapi: 3.1.0
+info:
+  title: Pinguin Dinus Portal API
+  version: 1.0.0-draft
+  description: >-
+    Draft contract for the rebuilt Pinguin Dinus web portal. Downloads are served
+    from LISTING_DIR through the current API runtime. Health, listing, download,
+    summary, timeseries, region, and external mirror status routes are implemented.
+    Public and admin survey routes are implemented. Admin routes require a
+    configured JWT_SECRET used to verify administrator JWTs.
+servers:
+  - url: http://127.0.0.1:8080/api/v1
+    description: Local development API server
+  - url: https://pinguin.dinus.ac.id/api/v1
+    description: Production API server
+  - url: /api/v1
+    description: Relative API server path
+tags:
+  - name: Health
+  - name: Catalog
+  - name: Statistics
+  - name: Surveys
+  - name: Admin
+security: []
+paths:
+  /health/live:
+    servers:
+      - url: http://127.0.0.1:8080
+        description: Local development root server
+      - url: https://pinguin.dinus.ac.id
+        description: Production root server
+      - url: /
+        description: Relative root server path
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Check that the API process is alive
+      responses:
+        '200':
+          description: API process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /health/ready:
+    servers:
+      - url: http://127.0.0.1:8080
+        description: Local development root server
+      - url: https://pinguin.dinus.ac.id
+        description: Production root server
+      - url: /
+        description: Relative root server path
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Check required API dependencies
+      responses:
+        '200':
+          description: API is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          $ref: '#/components/responses/Error'
+  /repositories:
+    get:
+      tags: [Catalog]
+      operationId: listRepositories
+      summary: Search and browse portal repository metadata
+      parameters:
+        - $ref: '#/components/parameters/Q'
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [iso, package, tool]
+            examples: ["iso"]
+        - name: distribution
+          in: query
+          schema:
+            type: string
+            examples: ["Debian"]
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, updated]
+            default: name
+            examples: ["name"]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+            examples: ["asc"]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated repository summaries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RepositorySummary'
+        '400':
+          $ref: '#/components/responses/Error'
+  /listing:
+    get:
+      tags: [Catalog]
+      operationId: browseListingDirectory
+      summary: List files and subdirectories under LISTING_DIR
+      description: >-
+        Returns only entries rooted under the configured LISTING_DIR. Paths are
+        relative and may not escape the configured root. Directory entries
+        should be shown before files by clients.
+      parameters:
+        - name: path
+          in: query
+          description: Relative directory path; omit or use an empty value for the root.
+          schema:
+            type: string
+            examples: [""]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated child directories and regular files
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: object
+                    required: [path, entries]
+                    properties:
+                      path:
+                        type: string
+                      entries:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ListingEntry'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /download:
+    get:
+      tags: [Catalog]
+      operationId: downloadMirrorFile
+      summary: Stream a file from LISTING_DIR to the browser
+      description: >-
+        Streams regular files from the configured root, supports HTTP Range
+        requests and records an aggregate-safe event without storing IP or
+        user-agent. Directory traversal outside LISTING_DIR is rejected.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+            examples: ["ubuntu-24.04.3-desktop-amd64.iso.torrent"]
+        - name: Range
+          in: header
+          schema:
+            type: string
+            examples: ["bytes=0-99"]
+          description: Standard HTTP byte range, supported for resume/partial downloads.
+      responses:
+        '200':
+          description: File content
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            Last-Modified:
+              schema:
+                type: string
+        '206':
+          description: Partial file content for a range request
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /repositories/{id}:
+    get:
+      tags: [Catalog]
+      operationId: getRepository
+      summary: Get repository details and direct mirror URLs
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Repository detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RepositoryDetail'
+        '404':
+          $ref: '#/components/responses/Error'
+  /stats/summary:
+    get:
+      tags: [Statistics]
+      operationId: getStatsSummary
+      summary: Get portal and mirror summary metrics
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - name: repository
+          in: query
+          description: >-
+            Filter by public repository UUID. Events match the repository's
+            path_prefix (or its slug when no prefix is configured). A valid UUID
+            with no matching events returns an empty aggregate.
+          schema:
+            type: string
+            format: uuid
+            examples: ["80883c7d-d938-40bd-9bf8-c100e3304549"]
+        - name: distribution
+          in: query
+          description: Filter by distribution name among repository-mapped events.
+          schema:
+            type: string
+            examples: ["Debian"]
+      responses:
+        '200':
+          description: Summary metrics with source timestamp
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StatsSummary'
+        '400':
+          $ref: '#/components/responses/Error'
+  /stats/timeseries:
+    get:
+      tags: [Statistics]
+      operationId: getStatsTimeseries
+      summary: Get download and bandwidth time buckets
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - name: repository
+          in: query
+          description: >-
+            Filter by public repository UUID. Events match the repository's
+            path_prefix (or its slug when no prefix is configured). A valid UUID
+            with no matching events returns an empty aggregate.
+          schema:
+            type: string
+            format: uuid
+            examples: ["80883c7d-d938-40bd-9bf8-c100e3304549"]
+        - name: distribution
+          in: query
+          description: Filter by distribution name among repository-mapped events.
+          schema:
+            type: string
+            examples: ["Debian"]
+      responses:
+        '200':
+          description: Time-series buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TimeseriesPoint'
+        '400':
+          $ref: '#/components/responses/Error'
+  /stats/regions:
+    get:
+      tags: [Statistics]
+      operationId: getStatsRegions
+      summary: Get privacy-preserving geographic download aggregates
+      parameters:
+        - $ref: '#/components/parameters/Period'
+        - name: repository
+          in: query
+          description: >-
+            Filter by public repository UUID. Events match the repository's
+            path_prefix (or its slug when no prefix is configured). A valid UUID
+            with no matching events returns an empty aggregate.
+          schema:
+            type: string
+            format: uuid
+            examples: ["80883c7d-d938-40bd-9bf8-c100e3304549"]
+        - name: distribution
+          in: query
+          schema:
+            type: string
+            examples: ["Debian"]
+      responses:
+        '200':
+          description: >-
+            Region aggregates require at least five events. Smaller regions are
+            combined as country-level Other when their combined count reaches
+            five; otherwise they are omitted. Other coordinates are null. This
+            threshold counts events rather than unique people.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RegionAggregate'
+        '400':
+          $ref: '#/components/responses/Error'
+  /mirrors/status:
+    get:
+      tags: [Catalog]
+      operationId: getMirrorStatus
+      summary: Probe configured external mirrors
+      responses:
+        '200':
+          description: Latest reachability checks for configured mirror URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, url, status, checked_at, latency_ms]
+                      properties:
+                        name: { type: string }
+                        url: { type: string, format: uri }
+                        status: { type: string, enum: [healthy, degraded, unavailable] }
+                        checked_at: { type: string, format: date-time }
+                        latency_ms: { type: integer, minimum: 0 }
+  /surveys/active:
+    get:
+      tags: [Surveys]
+      operationId: getActiveSurvey
+      summary: Get the active public ISO request survey, if any
+      responses:
+        '200':
+          description: Active public form or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/PublicSurvey'
+                      - type: 'null'
+  /surveys/{id}/responses:
+    post:
+      tags: [Surveys]
+      operationId: submitSurveyResponse
+      summary: Submit a response to an active ISO request survey
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique key for safe retries within the survey scope.
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+            examples: ["client-survey-submit-20261125"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SurveySubmission'
+      responses:
+        '201':
+          description: Response accepted; private answers are not echoed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Receipt'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+  /admin/surveys:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: listAdminSurveys
+      summary: List surveys for authorized administrators
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, active, closed, archived]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated survey list without individual response data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: createAdminSurvey
+      summary: Create a survey draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SurveyDraftInput'
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: getAdminSurvey
+      summary: Get a survey for administration
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Survey editor data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: updateAdminSurveyDraft
+      summary: Update editable survey draft fields
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SurveyDraftInput'
+      responses:
+        '200':
+          description: Draft updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}/publish:
+    post:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: publishAdminSurvey
+      summary: Publish a validated draft survey
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Survey published
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}/close:
+    post:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: closeAdminSurvey
+      summary: Close a survey to new responses
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Survey closed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}/archive:
+    post:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: archiveAdminSurvey
+      summary: Archive a closed survey
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Survey archived
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminSurvey'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}/results:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: getAdminSurveyResults
+      summary: Get aggregated survey results and option ranking
+      description: Access is audited before results are returned; audit write failure returns HTTP 500 without the result payload.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Aggregated results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SurveyResults'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /admin/surveys/{id}/responses:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: listAdminSurveyResponses
+      summary: List minimized individual responses for an authorized role
+      description: Access is audited before responses are returned; audit write failure returns HTTP 500 without the response payload.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated operational response data with contacts masked by default
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /admin/survey-options/{id}/fulfillment:
+    patch:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: updateOptionFulfillment
+      summary: Update ISO mirror fulfillment status
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FulfillmentUpdate'
+      responses:
+        '200':
+          description: Fulfillment status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Fulfillment'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: listAuditLogs
+      summary: Search the administrator audit trail
+      parameters:
+        - name: actor_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated audit entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /admin/workers/analytics:
+    get:
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      operationId: getAnalyticsWorkerStatus
+      summary: Inspect analytics worker health and backlog
+      description: Returns operational counters only; no raw download or personal data is included.
+      responses:
+        '200':
+          description: Last worker attempt, success, batch size, failures, and pending event count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [health, status]
+                    properties:
+                      health:
+                        type: string
+                        enum: [ok, degraded, stale]
+                      status:
+                        type: object
+                        required: [last_batch_processed, last_batch_duration_ms, consecutive_failures, pending_events]
+                        properties:
+                          last_started_at: {type: [string, 'null'], format: date-time}
+                          last_succeeded_at: {type: [string, 'null'], format: date-time}
+                          last_batch_processed: {type: integer, minimum: 0}
+                          last_batch_duration_ms: {type: integer, minimum: 0}
+                          consecutive_failures: {type: integer, minimum: 0}
+                          last_error_code: {type: [string, 'null']}
+                          pending_events: {type: integer, minimum: 0}
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    adminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        HS256 JWT with sub, role/roles, iss, aud, iat, nbf, and exp claims.
+        JWT_SECRET must contain at least 32 bytes. JWT_SECRET_PREVIOUS may be
+        configured temporarily for signing-key rotation. Tokens may live at most
+        24 hours. Roles: admin, survey_manager, response_reader,
+        fulfillment_manager, audit_reader. The subject is recorded as the
+        administrator audit actor; role failures return 403. survey_manager
+        manages surveys and reads results; response_reader reads results and
+        responses; fulfillment_manager updates fulfillment; audit_reader reads
+        audit logs. Worker status is admin-only.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+        examples: ["80883c7d-d938-40bd-9bf8-c100e3304549"]
+    Q:
+      name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 200
+        examples: ["debian"]
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+        examples: [1]
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+        examples: [20]
+    Period:
+      name: period
+      in: query
+      schema:
+        type: string
+        enum: [24h, 7d, 30d]
+        default: 30d
+        examples: ["30d"]
+  responses:
+    Error:
+      description: API error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Pagination:
+      type: object
+      required: [page, page_size, total, total_pages]
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+    PaginatedResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: {}
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+              format: uuid
+    RepositorySummary:
+      type: object
+      required: [id, slug, path_prefix, name, category, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        path_prefix:
+          type: string
+          description: Normalized relative path prefix used to map mirror events to this repository.
+        name:
+          type: string
+        distribution:
+          type: string
+        category:
+          type: string
+          enum: [iso, package, tool]
+        description:
+          type: [string, 'null']
+        status:
+          type: string
+    RepositoryDetail:
+      allOf:
+        - $ref: '#/components/schemas/RepositorySummary'
+        - type: object
+          properties:
+            releases:
+              type: array
+              items:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  released_at:
+                    type: [string, 'null']
+                    format: date-time
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, download_url]
+                      properties:
+                        path:
+                          type: string
+                        size_bytes:
+                          type: integer
+                          minimum: 0
+                        checksum:
+                          type: [string, 'null']
+                        checksum_algorithm:
+                          type: [string, 'null']
+                        download_url:
+                          type: string
+                          format: uri
+            mirror_status:
+              type: string
+    StatsSummary:
+      type: object
+      required: [period, generated_at, download_requests, completed_downloads, bandwidth_bytes, popular_files]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        period:
+          type: string
+          enum: [24h, 7d, 30d]
+        download_requests:
+          type: integer
+          minimum: 0
+        completed_downloads:
+          type: integer
+          minimum: 0
+        bandwidth_bytes:
+          type: integer
+          minimum: 0
+        popular_files:
+          type: array
+          items:
+            type: object
+            required: [path, requests, bytes_sent]
+            properties:
+              path:
+                type: string
+              requests:
+                type: integer
+                minimum: 0
+              bytes_sent:
+                type: integer
+                minimum: 0
+    TimeseriesPoint:
+      type: object
+      required: [bucket_start, download_requests, completed_downloads, bytes_sent]
+      properties:
+        bucket_start:
+          type: string
+          format: date-time
+        download_requests:
+          type: integer
+          minimum: 0
+        completed_downloads:
+          type: integer
+          minimum: 0
+        bytes_sent:
+          type: integer
+          minimum: 0
+    RegionAggregate:
+      type: object
+      required: [region, country, latitude, longitude, downloads, period]
+      properties:
+        region:
+          type: string
+        country:
+          type: string
+        latitude:
+          type: [number, 'null']
+          minimum: -90
+          maximum: 90
+          description: Null for country-level Other aggregates.
+        longitude:
+          type: [number, 'null']
+          minimum: -180
+          maximum: 180
+          description: Null for country-level Other aggregates.
+        downloads:
+          type: integer
+          minimum: 0
+        period:
+          type: string
+          enum: [24h, 7d, 30d]
+    ListingEntry:
+      type: object
+      required: [name, path, kind]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [directory, file]
+        size_bytes:
+          type: integer
+          minimum: 0
+        modified_at:
+          type: string
+          format: date-time
+        download_url:
+          type: string
+    PublicSurvey:
+      type: object
+      required: [id, title, starts_at, ends_at, questions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: [string, 'null']
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicQuestion'
+    PublicQuestion:
+      type: object
+      required: [id, label, type, required, options]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        type:
+          type: string
+          enum: [single_choice, multiple_choice, short_text, long_text, iso_proposal]
+        required:
+          type: boolean
+        options:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id:
+                type: string
+                format: uuid
+              label:
+                type: string
+    SurveySubmission:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            type: object
+            required: [question_id]
+            properties:
+              question_id:
+                type: string
+                format: uuid
+              option_ids:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+              text:
+                type: string
+                maxLength: 5000
+        contact:
+          type: object
+          properties:
+            email:
+              type: string
+              format: email
+              maxLength: 254
+    Receipt:
+      type: object
+      required: [receipt_id, submitted_at]
+      properties:
+        receipt_id:
+          type: string
+          format: uuid
+        submitted_at:
+          type: string
+          format: date-time
+    SurveyDraftInput:
+      type: object
+      required: [title, starts_at, ends_at, questions]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: [string, 'null']
+          maxLength: 5000
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        questions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [label, type, required]
+            properties:
+              label:
+                type: string
+                minLength: 1
+                maxLength: 500
+              type:
+                type: string
+                enum: [single_choice, multiple_choice, short_text, long_text, iso_proposal]
+              required:
+                type: boolean
+              options:
+                type: array
+                items:
+                  type: object
+                  required: [label]
+                  properties:
+                    label:
+                      type: string
+                      minLength: 1
+                      maxLength: 200
+                    slug:
+                      type: string
+                    upstream_url:
+                      type: [string, 'null']
+                      format: uri
+    AdminSurvey:
+      allOf:
+        - $ref: '#/components/schemas/PublicSurvey'
+        - type: object
+          required: [status, response_count, created_at, updated_at]
+          properties:
+            status:
+              type: string
+              enum: [draft, active, closed, archived]
+            response_count:
+              type: integer
+              minimum: 0
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+    SurveyResults:
+      type: object
+      required: [response_count, options]
+      properties:
+        response_count:
+          type: integer
+          minimum: 0
+        options:
+          type: array
+          items:
+            type: object
+            required: [option_id, label, request_count, rank]
+            properties:
+              option_id:
+                type: string
+                format: uuid
+              label:
+                type: string
+              request_count:
+                type: integer
+                minimum: 0
+              rank:
+                type: integer
+                minimum: 1
+    FulfillmentUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [new, reviewing, prioritized, in_progress, fulfilled, rejected]
+        priority:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+          maxLength: 5000
+        repository_id:
+          type: [string, 'null']
+          format: uuid
+    Fulfillment:
+      allOf:
+        - $ref: '#/components/schemas/FulfillmentUpdate'
+        - type: object
+          required: [option_id, updated_at]
+          properties:
+            option_id:
+              type: string
+              format: uuid
+            updated_at:
+              type: string
+              format: date-time

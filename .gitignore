@@ -1,0 +1,7 @@
+/.env
+/backend/.env
+/mirror-sample/
+/deploy/.env.production
+/deploy/backups/
+/.reverse-api-engineer-inspect/
+/postman/skills/

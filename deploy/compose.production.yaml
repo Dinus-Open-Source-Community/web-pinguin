@@ -1,0 +1,147 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [private]
+
+  migrate:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-migrate
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: migrate
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment: &db-env
+      DB_HOST: postgres
+      DB_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks: [private]
+
+  api:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-api
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: api
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment:
+      <<: *db-env
+      API_ADDR: 0.0.0.0:8080
+      LISTING_DIR: /srv/mirror
+      CORS_ALLOWED_ORIGINS: https://${PUBLIC_DOMAIN}
+    volumes:
+      - ${MIRROR_DIR:?set MIRROR_DIR}:/srv/mirror:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [private]
+
+  worker:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-worker
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: worker
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment: *db-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [private]
+
+  retention:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-retention
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: retention
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment: *db-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [private]
+
+  nginx-import:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-nginx-import
+    profiles: [import]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: nginx-import
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment:
+      <<: *db-env
+      NGINX_ACCESS_LOG: /imports/access.log
+      NGINX_STATE_PATH: /state/nginx-offset.json
+      GEOIP_DB_PATH: /geoip/GeoLite2-City.mmdb
+    volumes:
+      - ${NGINX_ACCESS_LOG_FILE:-/dev/null}:/imports/access.log:ro
+      - nginx_import_state:/state
+      - ${GEOIP_DB_FILE:-/dev/null}:/geoip/GeoLite2-City.mmdb:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [private]
+
+  catalog-import:
+    image: ${IMAGE_PREFIX:-web-pinguin/backend}:${APP_VERSION:-local}-catalog-import
+    profiles: [import]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: catalog-import
+    env_file: ${BACKEND_ENV_FILE:-.env.production}
+    environment: *db-env
+    volumes:
+      - ${CATALOG_MANIFEST:-/dev/null}:/manifest.json:ro
+    command: ["/manifest.json"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [private]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+    networks: [private]
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  nginx_import_state:
+
+networks:
+  private:
+    driver: bridge

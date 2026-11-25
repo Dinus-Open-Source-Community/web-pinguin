@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS mirror_fulfillments;
+DROP TABLE IF EXISTS survey_proposals;
+DROP TABLE IF EXISTS survey_idempotency_keys;
+DROP TABLE IF EXISTS survey_response_selections;
+DROP TABLE IF EXISTS survey_response_answers;
+DROP TABLE IF EXISTS survey_response_contacts;
+DROP TABLE IF EXISTS survey_responses;
+DROP TABLE IF EXISTS survey_options;
+DROP TABLE IF EXISTS survey_questions;
+DROP TABLE IF EXISTS surveys;
