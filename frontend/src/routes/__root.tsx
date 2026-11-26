@@ -1,8 +1,10 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
+import { QueryClientProvider } from '@tanstack/react-query'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
+import { queryClient } from '../lib/query-client'
 
 import appCss from '../styles.css?url'
 
@@ -19,7 +21,12 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1',
       },
       {
-        title: 'TanStack Start Starter',
+        title: 'Pinguin Dinus — Linux Mirror Portal UDINUS',
+      },
+      {
+        name: 'description',
+        content:
+          'Layanan mirror distribusi Linux dan repositori software open source resmi Universitas Dian Nuswantoro (UDINUS) dikelola oleh DOSCOM.',
       },
     ],
     links: [
@@ -34,15 +41,17 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="id" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <HeadContent />
       </head>
-      <body className="font-sans antialiased [overflow-wrap:anywhere] selection:bg-[rgba(79,184,178,0.24)]">
-        <Header />
-        {children}
-        <Footer />
+      <body className="font-sans antialiased [overflow-wrap:anywhere] selection:bg-cyan-500/20 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen flex flex-col">
+        <QueryClientProvider client={queryClient}>
+          <Header />
+          <main className="flex-1">{children}</main>
+          <Footer />
+        </QueryClientProvider>
         <TanStackDevtools
           config={{
             position: 'bottom-right',
